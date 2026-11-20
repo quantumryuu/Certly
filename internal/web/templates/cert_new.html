@@ -1,0 +1,55 @@
+{{define "content"}}
+{{with .Data}}
+<h2>{{if .RenewFrom}}Renew “{{.RenewFrom.CommonName}}”{{else}}New certificate{{end}}</h2>
+{{if .RenewFrom}}<p class="muted">The form is pre-filled from <a href="/certs/{{.RenewFrom.ID}}">#{{.RenewFrom.ID}}</a>. A new key and serial are generated. Revoke the old certificate (reason “Superseded”) once the new one is deployed.</p>{{end}}
+{{if not .Issuers}}
+<p class="notice warn">There is no usable CA yet. <a href="/cas/new">Create a CA</a> first.</p>
+{{else}}
+<form method="post" action="/certs" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <div class="grid">
+    <label>Type
+      <select name="kind">
+        <option value="client" {{if eq .Kind "client"}}selected{{end}}>Client (mTLS client auth)</option>
+        <option value="server" {{if eq .Kind "server"}}selected{{end}}>Server (TLS server)</option>
+        <option value="client-server" {{if eq .Kind "client-server"}}selected{{end}}>Client + Server</option>
+      </select>
+    </label>
+    <label>Issuing CA
+      <select name="issuer_id">
+        {{range .Issuers}}<option value="{{.ID}}" {{if eq .ID $.Data.IssuerID}}selected{{end}}>{{.CommonName}} ({{kindLabel .Kind}})</option>{{end}}
+      </select>
+    </label>
+  </div>
+  {{template "subject" .}}
+  <fieldset>
+    <legend>Subject alternative names <small class="muted">(one per line or comma-separated; servers need at least one DNS name or IP)</small></legend>
+    <div class="grid">
+      <label>DNS names <textarea name="dns" rows="3" placeholder="nas.lan&#10;*.svc.lan">{{.DNS}}</textarea></label>
+      <label>IP addresses <textarea name="ips" rows="3" placeholder="10.0.0.5">{{.IPs}}</textarea></label>
+    </div>
+    <div class="grid">
+      <label>Emails <textarea name="emails" rows="2">{{.Emails}}</textarea></label>
+      <label>URIs <textarea name="uris" rows="2" placeholder="spiffe://lab/workload">{{.URIs}}</textarea></label>
+    </div>
+  </fieldset>
+  <div class="grid">
+    <label>Key type
+      <select name="key_type">{{range .KeyTypes}}<option value="{{.}}" {{if eq (print .) $.Data.KeyType}}selected{{end}}>{{.}}</option>{{end}}</select>
+    </label>
+    <label>Validity (days)
+      <input type="number" name="days" min="1" max="3650" value="{{.Days}}" required>
+    </label>
+  </div>
+  <details>
+    <summary>Sign a CSR instead of generating a key</summary>
+    <p class="small muted">The key stays on your device. Only the CSR's public key is used: subject and SANs come from this form, and Certly stores no private key, so key-based exports won't be available.</p>
+    <label>CSR (PEM) <textarea name="csr" rows="5" class="mono" placeholder="-----BEGIN CERTIFICATE REQUEST-----">{{.CSR}}</textarea></label>
+    <label>…or upload a CSR file <input type="file" name="csr_file" accept=".csr,.pem,.der,.req"></label>
+  </details>
+  <label>Notes <textarea name="notes" rows="2" maxlength="1000">{{.Notes}}</textarea></label>
+  <button type="submit">Issue certificate</button>
+</form>
+{{end}}
+{{end}}
+{{end}}

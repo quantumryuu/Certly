@@ -1,0 +1,47 @@
+[Unit]
+Description=Certly private CA
+Documentation=https://github.com/quantumryuu/Certly
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=certly
+Group=certly
+EnvironmentFile=-/etc/certly/certly.env
+Environment=CERTLY_DATA_DIR=/var/lib/certly
+ExecStart=/usr/local/bin/certly serve
+Restart=on-failure
+RestartSec=5s
+UMask=0077
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/certly
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RemoveIPC=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+
+[Install]
+WantedBy=multi-user.target

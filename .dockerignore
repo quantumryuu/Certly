@@ -1,0 +1,12 @@
+.git
+.github
+.claude
+bin
+dist
+data
+*.db*
+*.key
+*.pem
+*.p12
+*.tar.gz*
+.env*

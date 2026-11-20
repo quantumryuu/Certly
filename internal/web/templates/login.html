@@ -1,0 +1,18 @@
+{{define "content"}}
+<article class="auth-box">
+  <h2>Sign in</h2>
+  <form method="post" action="/login">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Username
+      <input name="username" autocomplete="username" required maxlength="64" value="{{with .Data}}{{.Username}}{{end}}" autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" autocomplete="current-password" required maxlength="256">
+    </label>
+    <label>Authenticator code <small class="muted">(only if two-factor is on)</small>
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+    </label>
+    <button type="submit">Sign in</button>
+  </form>
+</article>
+{{end}}

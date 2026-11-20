@@ -1,0 +1,117 @@
+{{define "content"}}
+{{with .Data}}
+<div class="actions">
+  <h2 class="grow">{{.Cert.CommonName}} <span class="badge {{statusClass .Cert}}">{{status .Cert}}</span></h2>
+  {{if .CanSign}}
+    <a href="/certs/new?issuer={{.Cert.ID}}" role="button" class="small">Issue certificate</a>
+    <a href="/cas/new?issuer={{.Cert.ID}}" role="button" class="small secondary">New intermediate</a>
+  {{end}}
+  {{if and (not .Cert.IsCA) .Cert.HasKey}}<a href="/certs/new?renew={{.Cert.ID}}" role="button" class="small secondary">Renew</a>{{end}}
+</div>
+
+<div class="grid-2">
+  <article>
+    <dl class="kv">
+      <dt>Type</dt><dd>{{kindLabel .Cert.Kind}}{{if .Cert.Imported}} (imported){{end}}</dd>
+      <dt>Subject</dt><dd class="mono">{{.Cert.Subject}}</dd>
+      <dt>Issuer</dt><dd>{{if .Cert.IssuerID.Valid}}<a href="/certs/{{.Cert.IssuerID.Int64}}">{{.Cert.IssuerName}}</a>{{else}}self-signed{{end}}</dd>
+      {{if .Cert.SANs}}<dt>SANs</dt><dd>{{.Cert.SANs}}</dd>{{end}}
+      <dt>Valid from</dt><dd>{{datetime .Cert.NotBefore}}</dd>
+      <dt>Valid until</dt><dd>{{datetime .Cert.NotAfter}} <span class="muted">({{daysLeft .Cert.NotAfter}} days)</span></dd>
+      <dt>Key</dt><dd>{{.Cert.KeyType}}{{if not .Cert.HasKey}} <span class="muted">(private key not stored)</span>{{end}}</dd>
+      <dt>Serial</dt><dd class="mono small">{{serial .Cert.Serial}}</dd>
+      <dt>SHA-256</dt><dd class="mono small">{{serial .Fingerprint}}</dd>
+      {{if .X509.IsCA}}<dt>Path length</dt><dd>{{if .X509.MaxPathLenZero}}0{{else if lt .X509.MaxPathLen 0}}unlimited{{else}}{{.X509.MaxPathLen}}{{end}}</dd>{{end}}
+      {{if .X509.CRLDistributionPoints}}<dt>CRL (issuer)</dt><dd class="mono small">{{range .X509.CRLDistributionPoints}}{{.}} {{end}}</dd>{{end}}
+      {{if .CRLURL}}<dt>CRL published</dt><dd class="mono small"><a href="{{.CRLURL}}">{{.CRLURL}}</a><br>PEM for nginx: <a href="{{pemURL .CRLURL}}">{{pemURL .CRLURL}}</a></dd>{{end}}
+      {{if .Cert.RevokedAt}}<dt>Revoked</dt><dd>{{ptime .Cert.RevokedAt}} · {{reason .Cert}}</dd>{{end}}
+      {{if .Cert.RevokeAt}}<dt>Revocation scheduled</dt><dd>{{ptime .Cert.RevokeAt}} · {{reason .Cert}}</dd>{{end}}
+      {{if .Cert.Notes}}<dt>Notes</dt><dd>{{.Cert.Notes}}</dd>{{end}}
+    </dl>
+  </article>
+
+  <article>
+    <h3>Download</h3>
+    <form method="post" action="/certs/{{.Cert.ID}}/export">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <label>Format
+        <select name="format">
+          {{range .Formats}}<option value="{{.ID}}">{{.Label}}: {{.Description}}</option>{{end}}
+        </select>
+      </label>
+      {{if .Cert.HasKey}}
+      <label><input type="checkbox" name="include_key"> Include the private key in the zip bundle</label>
+      <div class="grid">
+        <label>Password <small class="muted">(encrypts key / .p12; required for .p12{{if .Cert.IsCA}} and CA keys{{end}})</small>
+          <input type="password" name="password" autocomplete="new-password" minlength="8" maxlength="256">
+        </label>
+        <label>Repeat password
+          <input type="password" name="password2" autocomplete="new-password" minlength="8" maxlength="256">
+        </label>
+      </div>
+      {{end}}
+      <button type="submit">Download</button>
+    </form>
+    <details>
+      <summary>Certificate PEM</summary>
+      <pre class="pem">{{.PEM}}</pre>
+    </details>
+  </article>
+</div>
+
+{{if not .Cert.RevokedAt}}
+<article>
+  <h3>Revoke</h3>
+  {{if .Cert.RevokeAt}}
+  <p>Revocation is scheduled for <strong>{{ptime .Cert.RevokeAt}}</strong>.</p>
+  <form method="post" action="/certs/{{.Cert.ID}}/cancel-revoke" class="inline">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <button type="submit" class="secondary">Cancel scheduled revocation</button>
+  </form>
+  <hr>
+  {{end}}
+  <form method="post" action="/certs/{{.Cert.ID}}/revoke">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="grid">
+      <label>When
+        <select name="when">
+          <option value="now">Now</option>
+          <option value="scheduled">At a date and time (below)</option>
+        </select>
+      </label>
+      <label>Date and time (UTC)
+        <input type="datetime-local" name="at">
+      </label>
+      <label>Reason
+        <select name="reason">{{range .Reasons}}<option value="{{.Code}}">{{.Label}}</option>{{end}}</select>
+      </label>
+    </div>
+    {{if .Cert.IsCA}}<p class="notice warn">Revoking a CA stops it from issuing and signing CRLs. Certificates it issued stay valid until you revoke them or they expire, but clients that check the CA's own revocation will reject them.</p>{{end}}
+    <label><input type="checkbox" name="confirm" required> I understand this can't be undone once it takes effect</label>
+    <button type="submit" class="danger">Revoke</button>
+  </form>
+</article>
+{{end}}
+
+{{if .Cert.IsCA}}
+<section>
+  <h3>Issued by this CA</h3>
+  {{if .Children}}
+  <table class="striped">
+    <thead><tr><th>Name</th><th>Type</th><th>Expires</th><th>Status</th></tr></thead>
+    <tbody>
+    {{range .Children}}
+      <tr><td><a href="/certs/{{.ID}}">{{.CommonName}}</a></td><td>{{kindLabel .Kind}}</td><td>{{date .NotAfter}}</td><td><span class="badge {{statusClass .}}">{{status .}}</span></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{else}}<p class="muted">Nothing yet.</p>{{end}}
+</section>
+{{end}}
+
+<section>
+  <h3>History</h3>
+  {{template "auditrows" .Audit}}
+</section>
+{{end}}
+{{end}}

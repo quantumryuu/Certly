@@ -1,0 +1,61 @@
+{{define "content"}}
+<h2>Settings</h2>
+{{with .Data}}
+<div class="grid-2">
+  <article>
+    <h3>Change password</h3>
+    <form method="post" action="/settings/password">
+      <input type="hidden" name="csrf" value="{{$.CSRF}}">
+      <label>Current password <input type="password" name="current_password" autocomplete="current-password" required></label>
+      <label>New password <small class="muted">(at least 12 characters)</small>
+        <input type="password" name="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+      <label>Repeat new password <input type="password" name="password2" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+      <button type="submit">Change password</button>
+    </form>
+  </article>
+
+  <article id="totp">
+    <h3>Two-factor authentication</h3>
+    {{if .TOTPEnabled}}
+      <p><span class="badge st-valid">on</span> Sign-in asks for a code from your authenticator app.</p>
+      <form method="post" action="/settings/totp/disable">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <label>Current password <input type="password" name="current_password" autocomplete="current-password" required></label>
+        <button type="submit" class="secondary">Turn off</button>
+      </form>
+    {{else if .TOTPPending}}
+      <p>Scan this with your authenticator app, then enter the 6-digit code it shows.</p>
+      {{if .TOTPQR}}<img class="qr" src="{{.TOTPQR}}" alt="TOTP QR code" width="220" height="220">{{end}}
+      <p class="small">Or enter the secret manually: <code class="mono">{{.TOTPSecret}}</code></p>
+      <form method="post" action="/settings/totp/confirm">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></label>
+        <button type="submit">Confirm and turn on</button>
+      </form>
+    {{else}}
+      <p><span class="badge st-expired">off</span> Strongly recommended: protects your CA keys if the password leaks.</p>
+      <form method="post" action="/settings/totp/start">
+        <input type="hidden" name="csrf" value="{{$.CSRF}}">
+        <button type="submit">Set up</button>
+      </form>
+    {{end}}
+  </article>
+</div>
+
+<article>
+  <h3>Backup</h3>
+  <p>Downloads a consistent snapshot of the database: certificates, CA keys (still encrypted with the master key), revocations and the audit log.
+  <strong>The master key is not included.</strong> Keep a copy of it somewhere safe, or this backup can't be used.</p>
+  <form method="post" action="/settings/backup">
+    <input type="hidden" name="csrf" value="{{$.CSRF}}">
+    <div class="grid">
+      <label>Current password <input type="password" name="current_password" autocomplete="current-password" required></label>
+      <label>Encryption passphrase <small class="muted">(optional, 12+ characters; decrypt with Certly or <code>age -d</code>)</small>
+        <input type="password" name="passphrase" autocomplete="new-password" maxlength="256"></label>
+    </div>
+    <button type="submit">Download backup</button>
+  </form>
+  <p class="small muted">To restore, stop Certly and run <code>certly restore &lt;file&gt;</code> on the server.</p>
+</article>
+{{end}}
+{{end}}

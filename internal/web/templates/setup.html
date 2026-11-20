@@ -1,0 +1,19 @@
+{{define "content"}}
+<article class="auth-box">
+  <h2>Welcome to Certly</h2>
+  <p>Create the admin account. This page only works once, while no account exists.</p>
+  <form method="post" action="/setup">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Username
+      <input name="username" autocomplete="username" required maxlength="64" value="{{with .Data}}{{.Username}}{{end}}" autofocus>
+    </label>
+    <label>Password <small class="muted">(at least 12 characters)</small>
+      <input type="password" name="password" autocomplete="new-password" required minlength="12" maxlength="256">
+    </label>
+    <label>Repeat password
+      <input type="password" name="password2" autocomplete="new-password" required minlength="12" maxlength="256">
+    </label>
+    <button type="submit">Create admin account</button>
+  </form>
+</article>
+{{end}}

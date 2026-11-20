@@ -1,0 +1,26 @@
+{{define "content"}}
+<h2>Import</h2>
+<p>Bring in CAs and certificates from your existing scripts so you can track, export and revoke them here.
+Import <strong>roots first, then intermediates, then leaf certificates</strong>: a certificate's issuer must already be in Certly (found by signature).</p>
+<form method="post" action="/import" enctype="multipart/form-data">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="grid">
+    <label>Certificate (PEM or DER)
+      <textarea name="cert" rows="6" class="mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+    </label>
+    <label>Private key (optional, PEM)
+      <textarea name="key" rows="6" class="mono" placeholder="-----BEGIN PRIVATE KEY-----"></textarea>
+    </label>
+  </div>
+  <div class="grid">
+    <label>…or upload the certificate <input type="file" name="cert_file" accept=".pem,.crt,.cer,.der"></label>
+    <label>…or upload the key <input type="file" name="key_file" accept=".pem,.key"></label>
+  </div>
+  <label>Key password <small class="muted">(if the key is encrypted PKCS#8)</small>
+    <input type="password" name="key_password" autocomplete="off" maxlength="256">
+  </label>
+  <label>Notes <textarea name="notes" rows="2" maxlength="1000"></textarea></label>
+  <p class="small muted">Keys are encrypted with the master key as soon as they're stored. A CA needs its key to issue certificates and publish CRLs here. Legacy encrypted PEM keys (“Proc-Type: 4,ENCRYPTED”) aren't accepted. Convert them first: <code>openssl pkcs8 -topk8 -v2 aes-256-cbc -in old.key -out new.key</code>. Certificates signed with SHA-1 or MD5 are rejected.</p>
+  <button type="submit">Import</button>
+</form>
+{{end}}

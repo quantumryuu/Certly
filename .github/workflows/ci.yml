@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 5 * * 1" # weekly: catch newly published CVEs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Verify modules
+        run: go mod verify
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - name: go vet
+        run: go vet ./...
+      - name: Build (static, CGO off)
+        run: CGO_ENABLED=0 go build -trimpath -o bin/certly ./cmd/certly
+      - name: Test
+        run: CGO_ENABLED=0 go test -count=1 ./...
+      - name: Test with race detector
+        run: CGO_ENABLED=1 go test -race -count=1 ./...
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Install scanners (pinned)
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.2
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.7.1
+      - name: govulncheck (Go toolchain + dependencies)
+        run: govulncheck ./...
+      - name: osv-scanner (go.mod, GitHub Actions)
+        run: osv-scanner scan source -r .
+      - name: gosec
+        run: gosec -quiet ./...
+      - name: staticcheck
+        run: staticcheck ./...
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          load: true
+          tags: certly:ci
+          build-args: VERSION=ci-${{ github.sha }}
+      - name: Smoke test
+        run: |
+          docker run -d --name certly --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges -p 8080:8080 certly:ci
+          for i in $(seq 1 20); do curl -fsS http://localhost:8080/healthz && break; sleep 1; done
+          curl -fsS -o /dev/null -w '%{http_code}\n' http://localhost:8080/setup
+          docker exec certly /certly healthcheck
+          test "$(docker inspect -f '{{.Config.User}}' certly)" = "65532:65532"
+          docker logs certly
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: certly:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

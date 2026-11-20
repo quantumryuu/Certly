@@ -1,0 +1,21 @@
+[Unit]
+Description=Certly nightly backup
+Documentation=https://github.com/quantumryuu/Certly
+
+[Service]
+Type=oneshot
+User=certly
+Group=certly
+EnvironmentFile=-/etc/certly/certly.env
+# Put CERTLY_BACKUP_PASSPHRASE in /etc/certly/backup.env (mode 0600) and add
+# -encrypt below to encrypt backups.
+EnvironmentFile=-/etc/certly/backup.env
+Environment=CERTLY_DATA_DIR=/var/lib/certly
+ExecStart=/usr/local/bin/certly backup -dir /var/lib/certly/backups -keep 14
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/certly
+PrivateTmp=true
+CapabilityBoundingSet=

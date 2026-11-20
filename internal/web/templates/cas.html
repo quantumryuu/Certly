@@ -1,0 +1,28 @@
+{{define "content"}}
+<div class="actions">
+  <h2 class="grow">Certificate authorities</h2>
+  <a href="/cas/new" role="button">New root CA</a>
+</div>
+{{with .Data}}
+{{if .Certs}}
+<table class="striped">
+  <thead><tr><th>Name</th><th>Type</th><th>Issuer</th><th>Key</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range .Certs}}
+    <tr>
+      <td><a href="/certs/{{.ID}}">{{.CommonName}}</a>{{if .Imported}} <span class="muted small">(imported)</span>{{end}}</td>
+      <td>{{kindLabel .Kind}}</td>
+      <td>{{if .IssuerName}}<a href="/certs/{{.IssuerID.Int64}}">{{.IssuerName}}</a>{{else}}<span class="muted">self-signed</span>{{end}}</td>
+      <td>{{.KeyType}}{{if not .HasKey}} <span class="muted small">(no key)</span>{{end}}</td>
+      <td>{{date .NotAfter}}</td>
+      <td><span class="badge {{statusClass .}}">{{status .}}</span></td>
+      <td>{{if .Usable now}}<a href="/certs/new?issuer={{.ID}}" class="small">Issue</a>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No CAs yet. <a href="/cas/new">Create a root CA</a> or <a href="/import">import one</a>.</p>
+{{end}}
+{{end}}
+{{end}}

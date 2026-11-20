@@ -1,0 +1,37 @@
+{{/* Blocks shared by all pages. */}}
+{{define "subject"}}
+<fieldset>
+  <legend>Subject</legend>
+  <label>Common name (CN)
+    <input name="cn" value="{{.CN}}" required maxlength="64" placeholder="Homelab Root CA">
+  </label>
+  <div class="grid">
+    <label>Organization <input name="o" value="{{.O}}" maxlength="64"></label>
+    <label>Org. unit <input name="ou" value="{{.OU}}" maxlength="64"></label>
+  </div>
+  <div class="grid">
+    <label>Country (2 letters) <input name="c" value="{{.C}}" maxlength="2" pattern="[A-Za-z]{2}"></label>
+    <label>State / province <input name="st" value="{{.ST}}" maxlength="64"></label>
+    <label>City <input name="l" value="{{.L}}" maxlength="64"></label>
+  </div>
+</fieldset>
+{{end}}
+
+{{define "auditrows"}}
+{{if .}}
+<table class="striped small">
+  <thead><tr><th>Time</th><th>Who</th><th>Action</th><th>Target</th><th>Details</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td>{{datetime .At}}</td>
+      <td>{{.Actor}}{{if .RemoteIP}} <span class="muted">({{.RemoteIP}})</span>{{end}}</td>
+      <td>{{.Action}}</td>
+      <td>{{if .TargetID.Valid}}<a href="/certs/{{.TargetID.Int64}}">#{{.TargetID.Int64}}</a>{{end}}</td>
+      <td class="mono">{{.Detail}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}<p class="muted">No entries.</p>{{end}}
+{{end}}

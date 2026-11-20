@@ -1,0 +1,46 @@
+{{define "content"}}
+<div class="actions">
+  <h2 class="grow">Certificates</h2>
+  <a href="/certs/new" role="button">New certificate</a>
+</div>
+{{with .Data}}
+<form method="get" action="/certs" role="search"
+      hx-get="/certs" hx-target="#cert-table" hx-swap="innerHTML" hx-push-url="true"
+      hx-trigger="input changed delay:300ms from:input[name=q], change from:select, submit">
+  <input type="search" name="q" value="{{.Search}}" placeholder="Search name, SAN or serial" aria-label="Search" maxlength="200">
+  <select name="status" aria-label="Status">
+    <option value="" {{if eq .Status ""}}selected{{end}}>All</option>
+    <option value="valid" {{if eq .Status "valid"}}selected{{end}}>Valid</option>
+    <option value="scheduled" {{if eq .Status "scheduled"}}selected{{end}}>Revocation scheduled</option>
+    <option value="revoked" {{if eq .Status "revoked"}}selected{{end}}>Revoked</option>
+    <option value="expired" {{if eq .Status "expired"}}selected{{end}}>Expired</option>
+  </select>
+  <button type="submit">Filter</button>
+</form>
+<div id="cert-table">{{template "certtable" $}}</div>
+{{end}}
+{{end}}
+
+{{define "certtable"}}
+{{with .Data}}
+{{if .Certs}}
+<table class="striped">
+  <thead><tr><th>Name</th><th>Type</th><th>SANs</th><th>Issuer</th><th>Expires</th><th>Status</th></tr></thead>
+  <tbody>
+  {{range .Certs}}
+    <tr>
+      <td><a href="/certs/{{.ID}}">{{.CommonName}}</a>{{if .Imported}} <span class="muted small">(imported)</span>{{end}}</td>
+      <td>{{kindLabel .Kind}}</td>
+      <td class="small">{{.SANs}}</td>
+      <td>{{if .IssuerName}}<a href="/certs/{{.IssuerID.Int64}}">{{.IssuerName}}</a>{{end}}</td>
+      <td>{{date .NotAfter}}</td>
+      <td><span class="badge {{statusClass .}}">{{status .}}</span></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+<p class="muted">No certificates match.</p>
+{{end}}
+{{end}}
+{{end}}

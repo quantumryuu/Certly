@@ -1,0 +1,27 @@
+# Certly with Docker Compose.
+#   docker compose up -d        then open http://localhost:8080
+# Set CERTLY_BASE_URL to the URL clients will use BEFORE issuing certificates:
+# it is embedded in every certificate as the CRL address.
+services:
+  certly:
+    image: ghcr.io/quantumryuu/certly:latest
+    build: .
+    container_name: certly
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      CERTLY_BASE_URL: "http://localhost:8080"
+      # CERTLY_TRUSTED_PROXIES: "172.16.0.0/12"   # if behind a reverse proxy
+      # CERTLY_LOG_FORMAT: json
+    volumes:
+      - certly-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  certly-data:

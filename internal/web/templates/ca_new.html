@@ -1,0 +1,41 @@
+{{define "content"}}
+{{with .Data}}
+<h2>New certificate authority</h2>
+<form method="post" action="/cas">
+  <input type="hidden" name="csrf" value="{{$.CSRF}}">
+  <fieldset>
+    <legend>Type</legend>
+    <label><input type="radio" name="kind" value="root" {{if eq .Kind "root"}}checked{{end}}> Root CA (self-signed)</label>
+    <label><input type="radio" name="kind" value="intermediate" {{if eq .Kind "intermediate"}}checked{{end}} {{if not .Issuers}}disabled{{end}}> Intermediate CA (signed by the CA below)</label>
+  </fieldset>
+  {{if .Issuers}}
+  <label>Issuing CA <small class="muted">(for intermediates)</small>
+    <select name="issuer_id">
+      {{range .Issuers}}<option value="{{.ID}}" {{if eq .ID $.Data.IssuerID}}selected{{end}}>{{.CommonName}} ({{kindLabel .Kind}})</option>{{end}}
+    </select>
+  </label>
+  {{end}}
+  {{template "subject" .}}
+  <div class="grid">
+    <label>Key type
+      <select name="key_type">{{range .KeyTypes}}<option value="{{.}}" {{if eq (print .) $.Data.KeyType}}selected{{end}}>{{.}}</option>{{end}}</select>
+    </label>
+    <label>Validity (days)
+      <input type="number" name="days" min="1" max="10950" value="{{.Days}}" required>
+    </label>
+    <label>Path length <small class="muted">(CA levels allowed below)</small>
+      <select name="pathlen">
+        <option value="0" {{if eq .PathLen 0}}selected{{end}}>0: can sign only end-entity certs</option>
+        <option value="1" {{if eq .PathLen 1}}selected{{end}}>1: can sign one level of intermediates</option>
+        <option value="2" {{if eq .PathLen 2}}selected{{end}}>2</option>
+        <option value="-1" {{if eq .PathLen -1}}selected{{end}}>Unlimited</option>
+      </select>
+    </label>
+  </div>
+  <label>Notes <textarea name="notes" rows="2" maxlength="1000">{{.Notes}}</textarea></label>
+  <p class="small muted">Recommended: a root CA with a long validity (10 years) and path length 1, then an intermediate (3–5 years, path length 0) that issues all your certificates.</p>
+  <button type="submit">Create CA</button>
+</form>
+{{end}}
+{{end}}
+

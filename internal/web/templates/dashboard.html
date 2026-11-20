@@ -1,0 +1,70 @@
+{{define "content"}}
+{{with .Data}}
+<h2>Dashboard</h2>
+{{if .Insecure}}
+<p class="notice warn">Certly is running without HTTPS (<code>{{.BaseURL}}</code>). Passwords and private keys cross the network unencrypted. Put it behind a TLS reverse proxy or set <code>CERTLY_TLS_CERT</code>/<code>CERTLY_TLS_KEY</code>.</p>
+{{end}}
+{{if not .CAs}}
+<article>
+  <h3>Get started</h3>
+  <ol>
+    <li><a href="/cas/new">Create a root CA</a> (long-lived, used only to sign intermediates).</li>
+    <li>Create an intermediate CA under it, then issue client and server certificates from the intermediate.</li>
+    <li>Or <a href="/import">import</a> CAs and certificates from your existing scripts.</li>
+  </ol>
+</article>
+{{end}}
+<section class="stats">
+  <article><strong>{{.Stats.CAs}}</strong><span class="muted">CAs</span></article>
+  <article><strong>{{.Stats.Valid}}</strong><span class="muted">valid certificates</span></article>
+  <article><strong>{{.Stats.Scheduled}}</strong><span class="muted">scheduled revocations</span></article>
+  <article><strong>{{.Stats.Revoked}}</strong><span class="muted">revoked</span></article>
+  <article><strong>{{.Stats.Expired}}</strong><span class="muted">expired</span></article>
+</section>
+
+<div class="grid-2">
+  <section>
+    <h3>Expiring within 30 days</h3>
+    {{if .Expiring}}
+    <table class="striped">
+      <thead><tr><th>Name</th><th>Type</th><th>Expires</th><th></th></tr></thead>
+      <tbody>
+      {{range .Expiring}}
+        <tr>
+          <td><a href="/certs/{{.ID}}">{{.CommonName}}</a></td>
+          <td>{{kindLabel .Kind}}</td>
+          <td>{{date .NotAfter}} <span class="muted small">({{daysLeft .NotAfter}} days)</span></td>
+          <td>{{if not .IsCA}}<a href="/certs/new?renew={{.ID}}" class="small">Renew</a>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="muted">Nothing expires in the next 30 days.</p>{{end}}
+  </section>
+  <section>
+    <h3>Certificate authorities</h3>
+    {{if .CAs}}
+    <table class="striped">
+      <thead><tr><th>Name</th><th>Type</th><th>Status</th></tr></thead>
+      <tbody>
+      {{range .CAs}}
+        <tr>
+          <td><a href="/certs/{{.ID}}">{{.CommonName}}</a></td>
+          <td>{{kindLabel .Kind}}</td>
+          <td><span class="badge {{statusClass .}}">{{status .}}</span></td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}<p class="muted">No CAs yet.</p>{{end}}
+  </section>
+</div>
+
+<section>
+  <h3>Recent activity</h3>
+  {{template "auditrows" .Audit}}
+  <p><a href="/audit">Full audit log →</a></p>
+</section>
+{{end}}
+{{end}}
+

@@ -1,0 +1,10 @@
+{{define "content"}}
+<h2>Audit log</h2>
+{{with .Data}}
+{{template "auditrows" .Entries}}
+<nav class="actions">
+  {{if gt .Page 1}}<a href="/audit?page={{dec .Page}}">← Newer</a>{{end}}
+  {{if .Next}}<a href="/audit?page={{inc .Page}}">Older →</a>{{end}}
+</nav>
+{{end}}
+{{end}}
