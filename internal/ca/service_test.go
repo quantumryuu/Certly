@@ -110,6 +110,31 @@ func TestIssueStoresEncryptedKeyAndCDP(t *testing.T) {
 	}
 }
 
+func TestNoBaseURLOmitsCDP(t *testing.T) {
+	s := newService(t)
+	s.BaseURL = ""
+	ctx := context.Background()
+	root, err := s.Issue(ctx, admin, IssueInput{Request: pki.Request{Kind: pki.KindRoot, Subject: pki.Subject{CommonName: "R"}, KeyType: pki.KeyECDSAP256, Validity: 365 * day, PathLen: 0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := s.Issue(ctx, admin, IssueInput{IssuerID: root.ID, Request: pki.Request{Kind: pki.KindClient, Subject: pki.Subject{CommonName: "c"}, KeyType: pki.KeyECDSAP256, Validity: day}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _ := x509.ParseCertificate(leaf.DER)
+	if len(c.CRLDistributionPoints) != 0 {
+		t.Fatalf("CDP embedded without a base URL: %v", c.CRLDistributionPoints)
+	}
+	// The CRL is still published and lists revocations.
+	if err := s.Revoke(ctx, admin, leaf.ID, time.Time{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := crlSerials(t, s, root.ID, root)[lower(leaf.Serial)]; !ok {
+		t.Fatal("revoked serial missing from CRL")
+	}
+}
+
 func mustKey(t *testing.T, s *Service, c *store.Cert) crypto.Signer {
 	t.Helper()
 	k, err := s.loadKey(c)

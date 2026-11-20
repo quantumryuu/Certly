@@ -63,7 +63,6 @@ type dashboardData struct {
 	Expiring []*store.Cert
 	CAs      []*store.Cert
 	Audit    []store.AuditEntry
-	BaseURL  string
 	Insecure bool
 }
 
@@ -91,7 +90,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, http.StatusOK, "dashboard", "Dashboard", "dashboard", dashboardData{
-		Stats: st, Expiring: exp, CAs: cas, Audit: audit, BaseURL: s.cfg.BaseURL,
+		Stats: st, Expiring: exp, CAs: cas, Audit: audit,
 		Insecure: !s.cfg.SecureCookies,
 	}, "")
 }
@@ -412,10 +411,11 @@ type viewData struct {
 		Code  int
 		Label string
 	}
-	Children []*store.Cert
-	Audit    []store.AuditEntry
-	CRLURL   string
-	CanSign  bool
+	Children    []*store.Cert
+	Audit       []store.AuditEntry
+	CRLURL      string
+	CRLEmbedded bool // whether certs issued by this CA carry the CRL URL
+	CanSign     bool
 }
 
 func (s *Server) certFromURL(r *http.Request) (*store.Cert, error) {
@@ -446,12 +446,26 @@ func (s *Server) viewPage(w http.ResponseWriter, r *http.Request, status int, c 
 	}
 	if c.IsCA() {
 		d.CRLURL = s.svc.CRLURL(c.ID)
+		d.CRLEmbedded = d.CRLURL != ""
+		if !d.CRLEmbedded {
+			d.CRLURL = s.publicURL(r, ca.CRLPath(c.ID))
+		}
 		d.Children, _ = s.st.ListCerts(r.Context(), store.CertFilter{IssuerID: c.ID}, time.Now())
 		inter, _ := s.st.ListCerts(r.Context(), store.CertFilter{CAs: true, IssuerID: c.ID}, time.Now())
 		d.Children = append(inter, d.Children...)
 	}
 	d.Audit, _ = s.st.ListAudit(r.Context(), c.ID, 20, 0)
 	s.render(w, r, status, "cert_view", c.CommonName, navFor(c), d, errMsg)
+}
+
+// publicURL builds an absolute URL for display from the address the admin
+// is using. Only shown to the logged-in admin; never embedded in certs.
+func (s *Server) publicURL(r *http.Request, path string) string {
+	scheme := "http"
+	if r.TLS != nil || s.cfg.SecureCookies {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
 }
 
 func navFor(c *store.Cert) string {

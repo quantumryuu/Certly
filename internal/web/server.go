@@ -65,9 +65,13 @@ type Server struct {
 
 // New builds the server.
 func New(cfg Config, svc *ca.Service, log *slog.Logger) (*Server, error) {
-	u, err := url.Parse(cfg.BaseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, fmt.Errorf("web: base URL must be an absolute http(s) URL, got %q", cfg.BaseURL)
+	origin := ""
+	if cfg.BaseURL != "" {
+		u, err := url.Parse(cfg.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("web: base URL must be an absolute http(s) URL, got %q", cfg.BaseURL)
+		}
+		origin = u.Scheme + "://" + u.Host
 	}
 	sm := scs.New()
 	sm.Store = sqlite3store.New(svc.Store.DB())
@@ -90,7 +94,7 @@ func New(cfg Config, svc *ca.Service, log *slog.Logger) (*Server, error) {
 	s := &Server{
 		cfg: cfg, svc: svc, st: svc.Store, env: svc.Env, sessions: sm,
 		limiter: auth.NewLimiter(), totp: auth.NewTOTPVerifier(), pages: pages, log: log,
-		origin: u.Scheme + "://" + u.Host,
+		origin: origin,
 	}
 	sm.ErrorFunc = func(w http.ResponseWriter, r *http.Request, err error) {
 		s.log.Error("session error", "err", err)
@@ -110,8 +114,12 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	r.Get("/crl/{file}", s.handleCRL)
 
+	// Same-origin requests (Origin matches Host) are always allowed; the base
+	// URL is trusted too, for proxies that rewrite Host.
 	cop := http.NewCrossOriginProtection()
-	_ = cop.AddTrustedOrigin(s.origin)
+	if s.origin != "" {
+		_ = cop.AddTrustedOrigin(s.origin)
+	}
 
 	r.Group(func(r chi.Router) {
 		r.Use(cop.Handler, s.sessions.LoadAndSave, s.csrf)

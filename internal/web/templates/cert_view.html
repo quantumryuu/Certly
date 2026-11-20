@@ -23,7 +23,8 @@
       <dt>SHA-256</dt><dd class="mono small">{{serial .Fingerprint}}</dd>
       {{if .X509.IsCA}}<dt>Path length</dt><dd>{{if .X509.MaxPathLenZero}}0{{else if lt .X509.MaxPathLen 0}}unlimited{{else}}{{.X509.MaxPathLen}}{{end}}</dd>{{end}}
       {{if .X509.CRLDistributionPoints}}<dt>CRL (issuer)</dt><dd class="mono small">{{range .X509.CRLDistributionPoints}}{{.}} {{end}}</dd>{{end}}
-      {{if .CRLURL}}<dt>CRL published</dt><dd class="mono small"><a href="{{.CRLURL}}">{{.CRLURL}}</a><br>PEM for nginx: <a href="{{pemURL .CRLURL}}">{{pemURL .CRLURL}}</a></dd>{{end}}
+      {{if .CRLURL}}<dt>CRL published</dt><dd class="mono small"><a href="{{.CRLURL}}">{{.CRLURL}}</a><br>PEM for nginx: <a href="{{pemURL .CRLURL}}">{{pemURL .CRLURL}}</a>
+        <br><span class="muted">{{if .CRLEmbedded}}Embedded in every certificate this CA issues.{{else}}Not embedded in certificates (CERTLY_BASE_URL is not set). Point your servers at this URL or a downloaded copy.{{end}}</span></dd>{{end}}
       {{if .Cert.RevokedAt}}<dt>Revoked</dt><dd>{{ptime .Cert.RevokedAt}} · {{reason .Cert}}</dd>{{end}}
       {{if .Cert.RevokeAt}}<dt>Revocation scheduled</dt><dd>{{ptime .Cert.RevokeAt}} · {{reason .Cert}}</dd>{{end}}
       {{if .Cert.Notes}}<dt>Notes</dt><dd>{{.Cert.Notes}}</dd>{{end}}

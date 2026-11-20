@@ -2,7 +2,7 @@
 {{with .Data}}
 <h2>Dashboard</h2>
 {{if .Insecure}}
-<p class="notice warn">Certly is running without HTTPS (<code>{{.BaseURL}}</code>). Passwords and private keys cross the network unencrypted. Put it behind a TLS reverse proxy or set <code>CERTLY_TLS_CERT</code>/<code>CERTLY_TLS_KEY</code>.</p>
+<p class="notice warn">Certly isn't configured for HTTPS, so passwords and private keys may cross the network unencrypted. Set <code>CERTLY_TLS_CERT</code>/<code>CERTLY_TLS_KEY</code>, or put it behind a TLS reverse proxy and set <code>CERTLY_SECURE_COOKIES=true</code>.</p>
 {{end}}
 {{if not .CAs}}
 <article>

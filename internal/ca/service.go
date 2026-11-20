@@ -28,7 +28,7 @@ const maxChainDepth = 8
 type Service struct {
 	Store       *store.Store
 	Env         *certcrypto.Envelope
-	BaseURL     string        // e.g. https://certly.lan, no trailing slash
+	BaseURL     string        // optional, e.g. https://certly.lan; empty = no CRL address in certs
 	CRLValidity time.Duration // how long a CRL is valid
 	Log         *slog.Logger
 	Now         func() time.Time
@@ -77,9 +77,16 @@ func (s *Service) Audit(ctx context.Context, a Actor, action string, target int6
 
 func keyAAD(id int64) string { return "cert-key:" + strconv.FormatInt(id, 10) }
 
-// CRLURL is the public CRL address for a CA.
+// CRLPath is the CRL path for a CA, relative to the server root.
+func CRLPath(caID int64) string { return "/crl/" + strconv.FormatInt(caID, 10) + ".crl" }
+
+// CRLURL is the CRL address embedded in certificates, or "" when no base URL
+// is configured (then certificates carry no CRL distribution point).
 func (s *Service) CRLURL(caID int64) string {
-	return strings.TrimRight(s.BaseURL, "/") + "/crl/" + strconv.FormatInt(caID, 10) + ".crl"
+	if s.BaseURL == "" {
+		return ""
+	}
+	return strings.TrimRight(s.BaseURL, "/") + CRLPath(caID)
 }
 
 // Signer loads a CA with its decrypted key.

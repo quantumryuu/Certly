@@ -11,7 +11,7 @@ Certly is a self-hosted web app for running your own certificate authority. It i
   - **encrypted PKCS#8** keys
   - a **zip bundle** with everything plus a README
 - **Revocation:** revoke **now** or **at a date and time**, with an RFC 5280 reason code. You can cancel a scheduled revocation before it happens.
-- **CRLs:** each CA publishes a CRL at a public URL that is embedded in every certificate it issues. CRLs are available as DER or PEM, ready for nginx, Traefik and HAProxy.
+- **CRLs:** each CA publishes a CRL at a public URL, as DER or PEM, ready for nginx and HAProxy. Optionally, the URL is embedded in every certificate the CA issues (`CERTLY_BASE_URL`).
 - **Expiry dashboard and renewal:** see what expires in the next 30 days, and renew with one click (the form is pre-filled).
 - **Import:** bring in the CAs and certificates your old scripts made, including encrypted keys.
 - **Security:**
@@ -44,7 +44,6 @@ Certly is a self-hosted web app for running your own certificate authority. It i
 
 ```sh
 git clone https://github.com/quantumryuu/Certly.git && cd Certly
-# Set CERTLY_BASE_URL in docker-compose.yml to the URL clients will use, then:
 docker compose up -d
 docker compose logs certly     # shows where the master key was created
 ```
@@ -76,7 +75,7 @@ sudo install -d -o certly -g certly -m 0700 /var/lib/certly
 # 3. Configuration
 sudo install -d -m 0755 /etc/certly
 sudo install -m 0600 deploy/certly.env.example /etc/certly/certly.env
-sudoedit /etc/certly/certly.env            # set CERTLY_BASE_URL at least
+sudoedit /etc/certly/certly.env            # listen address, TLS, optional base URL
 
 # 4. Service (with systemd sandboxing) and the nightly backup timer
 sudo cp deploy/certly.service deploy/certly-backup.service deploy/certly-backup.timer /etc/systemd/system/
@@ -93,7 +92,8 @@ Settings come from environment variables. Each variable also has a matching flag
 
 | Variable | Default | Description |
 |---|---|---|
-| `CERTLY_BASE_URL` | `http://localhost:8080` | The public URL clients use. Every certificate gets the CRL address `<base>/crl/<ca-id>.crl` from it, so **set this before issuing anything**. If it starts with `https://`, cookies are marked `Secure` and HSTS is sent. |
+| `CERTLY_BASE_URL` | *(empty)* | **Optional.** When set, every certificate embeds `<base>/crl/<ca-id>.crl` as its CRL distribution point, for clients that fetch CRLs themselves (Windows, some Java apps and appliances). Leave it empty if your servers load the CRL from a file (nginx `ssl_crl`, HAProxy `crl-file`). Then certificates carry no CRL address, and the CA page shows the CRL URLs anyway. The address is baked into each certificate when it's issued, so **decide before issuing**. If it starts with `https://`, secure cookies switch on automatically. |
+| `CERTLY_SECURE_COOKIES` | `auto` | `auto`, `true` or `false`. When on, cookies are marked `Secure` (`__Host-` prefix) and HSTS is sent. `auto` turns it on when `CERTLY_TLS_CERT` is set or `CERTLY_BASE_URL` starts with `https://`. **Set `true` behind a TLS reverse proxy** if you don't set a base URL. |
 | `CERTLY_LISTEN` | `:8080` | Address and port to listen on |
 | `CERTLY_DATA_DIR` | `/var/lib/certly` (Docker: `/data`) | Where the database, master key and lock file live. Must be private (`0700`). |
 | `CERTLY_MASTER_KEY_FILE` | `$CERTLY_DATA_DIR/master.key` | The 32-byte master key, base64-encoded. It's generated on the first `serve` if missing. Certly refuses to start if the file is readable by group or others. |
@@ -168,7 +168,7 @@ Click **Renew** on a certificate, or next to it on the dashboard's *Expiring wit
 Every CA publishes its CRL at two public URLs (no login needed):
 
 ```
-https://certly.lan/crl/<ca-id>.crl    # DER: this is the URL embedded in issued certs
+https://certly.lan/crl/<ca-id>.crl    # DER: embedded in issued certs when CERTLY_BASE_URL is set
 https://certly.lan/crl/<ca-id>.pem    # PEM: what nginx's ssl_crl expects
 ```
 
@@ -303,7 +303,7 @@ certly version
 **Logging:** the audit log records every login, issue, export, revocation, import, backup, and password or TOTP change, with the client IP. Request logs contain only the method and path, never query strings, bodies, passwords or keys.
 
 **Your responsibilities:**
-- **Use HTTPS.** Either set `CERTLY_TLS_CERT`/`CERTLY_TLS_KEY`, using a server certificate Certly issued for itself, or run it behind a TLS reverse proxy with `CERTLY_BASE_URL=https://…`. Over plain HTTP, the dashboard shows a warning.
+- **Use HTTPS.** Either set `CERTLY_TLS_CERT`/`CERTLY_TLS_KEY`, using a server certificate Certly issued for itself, or run it behind a TLS reverse proxy with `CERTLY_SECURE_COOKIES=true` (or an `https://` `CERTLY_BASE_URL`). Without HTTPS, the dashboard shows a warning.
 - **Don't expose Certly to the internet.** Use your LAN or a VPN. Only `/crl/*` and `/healthz` work without login, and the CRL is the only route that has to be reachable from where your services run.
 - **Guard the master key** and the host. Anyone with root on the host, or with the master key plus the database, has your CAs.
 - Turn on **TOTP**, and keep the OS and the Certly version up to date.

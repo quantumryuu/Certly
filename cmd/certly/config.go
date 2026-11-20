@@ -25,6 +25,7 @@ type config struct {
 	LogFormat      string
 	LogLevel       string
 	TrustedProxies string
+	SecureCookies  string
 	CRLValidity    time.Duration
 }
 
@@ -47,7 +48,7 @@ func bindConfig(fs *flag.FlagSet) *config {
 	c := &config{}
 	fs.StringVar(&c.DataDir, "data-dir", env("CERTLY_DATA_DIR", defaultDataDir()), "data directory (env CERTLY_DATA_DIR)")
 	fs.StringVar(&c.MasterKeyFile, "master-key-file", env("CERTLY_MASTER_KEY_FILE", ""), "master key file (env CERTLY_MASTER_KEY_FILE, default <data-dir>/master.key)")
-	fs.StringVar(&c.BaseURL, "base-url", env("CERTLY_BASE_URL", "http://localhost:8080"), "public URL, used in CRL distribution points (env CERTLY_BASE_URL)")
+	fs.StringVar(&c.BaseURL, "base-url", env("CERTLY_BASE_URL", ""), "optional public URL; if set, certificates embed <url>/crl/<id>.crl as their CRL address (env CERTLY_BASE_URL)")
 	fs.StringVar(&c.LogFormat, "log-format", env("CERTLY_LOG_FORMAT", "text"), "text or json (env CERTLY_LOG_FORMAT)")
 	fs.StringVar(&c.LogLevel, "log-level", env("CERTLY_LOG_LEVEL", "info"), "debug, info, warn, error (env CERTLY_LOG_LEVEL)")
 	crl := env("CERTLY_CRL_VALIDITY", "168h")
@@ -64,6 +65,7 @@ func bindServeConfig(fs *flag.FlagSet) *config {
 	fs.StringVar(&c.Listen, "listen", env("CERTLY_LISTEN", ":8080"), "listen address (env CERTLY_LISTEN)")
 	fs.StringVar(&c.TLSCert, "tls-cert", env("CERTLY_TLS_CERT", ""), "serve HTTPS with this certificate (env CERTLY_TLS_CERT)")
 	fs.StringVar(&c.TLSKey, "tls-key", env("CERTLY_TLS_KEY", ""), "private key for -tls-cert (env CERTLY_TLS_KEY)")
+	fs.StringVar(&c.SecureCookies, "secure-cookies", env("CERTLY_SECURE_COOKIES", "auto"), "auto, true or false: mark cookies Secure and send HSTS; auto = on when TLS is configured or the base URL is https (env CERTLY_SECURE_COOKIES)")
 	fs.StringVar(&c.TrustedProxies, "trusted-proxies", env("CERTLY_TRUSTED_PROXIES", ""), "comma-separated CIDRs whose X-Forwarded-For is trusted (env CERTLY_TRUSTED_PROXIES)")
 	return c
 }
@@ -77,11 +79,13 @@ func (c *config) finish(serve bool) error {
 	if c.MasterKeyFile == "" {
 		c.MasterKeyFile = filepath.Join(c.DataDir, "master.key")
 	}
-	u, err := url.Parse(c.BaseURL)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
-		return fmt.Errorf("CERTLY_BASE_URL must look like https://certly.lan (got %q)", c.BaseURL)
+	if c.BaseURL != "" {
+		u, err := url.Parse(c.BaseURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("CERTLY_BASE_URL must look like https://certly.lan (got %q)", c.BaseURL)
+		}
+		c.BaseURL = strings.TrimRight(c.BaseURL, "/")
 	}
-	c.BaseURL = strings.TrimRight(c.BaseURL, "/")
 	if c.LogFormat != "text" && c.LogFormat != "json" {
 		return errors.New("CERTLY_LOG_FORMAT must be text or json")
 	}
@@ -93,6 +97,11 @@ func (c *config) finish(serve bool) error {
 	}
 	if (c.TLSCert == "") != (c.TLSKey == "") {
 		return errors.New("set both CERTLY_TLS_CERT and CERTLY_TLS_KEY, or neither")
+	}
+	switch c.SecureCookies {
+	case "auto", "true", "false":
+	default:
+		return errors.New("CERTLY_SECURE_COOKIES must be auto, true or false")
 	}
 	_, err = c.proxies()
 	return err
@@ -122,6 +131,12 @@ func (c *config) proxies() ([]netip.Prefix, error) {
 
 // secure reports whether users reach Certly over HTTPS.
 func (c *config) secure() bool {
+	switch c.SecureCookies {
+	case "true":
+		return true
+	case "false":
+		return false
+	}
 	return strings.HasPrefix(c.BaseURL, "https://") || c.TLSCert != ""
 }
 

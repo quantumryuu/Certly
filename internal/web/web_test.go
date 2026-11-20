@@ -37,7 +37,10 @@ type env struct {
 	svc *ca.Service
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T) *env { return newEnvBase(t, true) }
+
+// newEnvBase starts a server; withBase sets CERTLY_BASE_URL to the test URL.
+func newEnvBase(t *testing.T, withBase bool) *env {
 	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "certly.db"))
 	if err != nil {
@@ -50,8 +53,12 @@ func newEnv(t *testing.T) *env {
 	ts := httptest.NewUnstartedServer(nil)
 	ts.Start()
 	t.Cleanup(ts.Close)
-	svc.BaseURL = ts.URL
-	srv, err := New(Config{BaseURL: ts.URL, DataDir: t.TempDir(), Version: "test"}, svc, log)
+	base := ""
+	if withBase {
+		base = ts.URL
+	}
+	svc.BaseURL = base
+	srv, err := New(Config{BaseURL: base, DataDir: t.TempDir(), Version: "test"}, svc, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -452,5 +459,31 @@ func TestClientIP(t *testing.T) {
 		if got := ClientIP(r, trusted); got != tc.want {
 			t.Fatalf("%s via %q: got %s want %s", tc.remote, tc.xff, got, tc.want)
 		}
+	}
+}
+
+func TestWithoutBaseURL(t *testing.T) {
+	e := newEnvBase(t, false)
+	e.setup()
+	_, inter := e.createChain()
+	resp, _ := e.post(e.c, "/certs/new", "/certs", url.Values{"kind": {"client"}, "issuer_id": {strconv.FormatInt(inter, 10)}, "cn": {"dev"}, "key_type": {"ecdsa-p256"}, "days": {"30"}})
+	leaf := idFrom(t, resp)
+	c, _ := e.st.CertByID(context.Background(), leaf)
+	pc, _ := x509.ParseCertificate(c.DER)
+	if len(pc.CRLDistributionPoints) != 0 {
+		t.Fatalf("CDP embedded: %v", pc.CRLDistributionPoints)
+	}
+	// The CA page shows the CRL URL built from the host being used.
+	u, _ := url.Parse(e.ts.URL)
+	_, body := e.do(e.c, "GET", "/certs/"+strconv.FormatInt(inter, 10), nil, nil)
+	want := "http://" + u.Host + "/crl/" + strconv.FormatInt(inter, 10) + ".crl"
+	if !strings.Contains(body, want) || !strings.Contains(body, "Not embedded in certificates") {
+		t.Fatalf("CA page missing %s", want)
+	}
+	// Cross-origin protection still works without a configured origin.
+	form := url.Values{"csrf": {e.csrf(e.c, "/cas/new")}, "kind": {"root"}, "cn": {"x"}, "key_type": {"ecdsa-p256"}, "days": {"10"}, "pathlen": {"0"}}
+	resp, _ = e.do(e.c, "POST", "/cas", form, map[string]string{"Origin": "http://evil.example"})
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin POST without base URL: %d", resp.StatusCode)
 	}
 }

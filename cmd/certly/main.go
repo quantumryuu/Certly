@@ -196,10 +196,13 @@ func cmdServe(args []string) error {
 		return err
 	}
 	if n, _ := svc.Store.CountUsers(ctx); n == 0 {
-		log.Warn("no admin account yet: open the web UI to create it, or run `certly admin create`", "url", c.BaseURL+"/setup")
+		log.Warn("no admin account yet: open /setup in the web UI, or run `certly admin create`")
 	}
 	if !c.secure() {
-		log.Warn("serving plain HTTP; use a TLS reverse proxy or set CERTLY_TLS_CERT/CERTLY_TLS_KEY")
+		log.Warn("cookies are not marked Secure: use HTTPS (CERTLY_TLS_CERT/CERTLY_TLS_KEY, or a TLS reverse proxy with CERTLY_SECURE_COOKIES=true)")
+	}
+	if c.BaseURL == "" {
+		log.Info("CERTLY_BASE_URL not set: issued certificates won't contain a CRL address (fine when servers load the CRL from a file)")
 	}
 	errc := make(chan error, 1)
 	go func() {
