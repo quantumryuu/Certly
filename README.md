@@ -11,7 +11,7 @@ Certly is a self-hosted web app for running your own certificate authority. It i
   - **encrypted PKCS#8** keys
   - a **zip bundle** with everything plus a README
 - **Revocation:** revoke **now** or **at a date and time**, with an RFC 5280 reason code. You can cancel a scheduled revocation before it happens.
-- **CRLs:** each CA publishes a CRL at a public URL, as DER or PEM, ready for nginx and HAProxy. Optionally, the URL is embedded in every certificate the CA issues (`CERTLY_BASE_URL`).
+- **CRLs:** each CA publishes a CRL at a public URL, as DER or PEM, for HAProxy, nginx and anything else that checks revocation. Optionally, the URL is embedded in every certificate the CA issues (`CERTLY_BASE_URL`). Caddy doesn't check CRLs, and the README shows how to revoke with it anyway.
 - **Expiry dashboard and renewal:** see what expires in the next 30 days, and renew with one click (the form is pre-filled).
 - **Import:** bring in the CAs and certificates your old scripts made, including encrypted keys.
 - **Security:**
@@ -93,7 +93,7 @@ Settings come from environment variables. Each variable also has a matching flag
 
 | Variable | Default | Description |
 |---|---|---|
-| `CERTLY_BASE_URL` | *(empty)* | **Optional.** When set, every certificate embeds `<base>/crl/<ca-id>.crl` as its CRL distribution point, for clients that fetch CRLs themselves (Windows, some Java apps and appliances). Leave it empty if your servers load the CRL from a file (nginx `ssl_crl`, HAProxy `crl-file`). Then certificates carry no CRL address, and the CA page shows the CRL URLs anyway. The address is baked into each certificate when it's issued, so **decide before issuing**. If it starts with `https://`, secure cookies switch on automatically. |
+| `CERTLY_BASE_URL` | *(empty)* | **Optional.** When set, every certificate embeds `<base>/crl/<ca-id>.crl` as its CRL distribution point, for clients that fetch CRLs themselves (Windows, some Java apps and appliances). Leave it empty if your servers load the CRL from a file (HAProxy `crl-file`, nginx `ssl_crl`) or don't check CRLs at all (Caddy). Then certificates carry no CRL address, and the CA page shows the CRL URLs anyway. The address is baked into each certificate when it's issued, so **decide before issuing**. If it starts with `https://`, secure cookies switch on automatically. |
 | `CERTLY_SECURE_COOKIES` | `auto` | `auto`, `true` or `false`. When on, cookies are marked `Secure` (`__Host-` prefix) and HSTS is sent. `auto` turns it on when `CERTLY_TLS_CERT` is set or `CERTLY_BASE_URL` starts with `https://`. **Set `true` behind a TLS reverse proxy** if you don't set a base URL. |
 | `CERTLY_LISTEN` | `:8080` | Address and port to listen on |
 | `CERTLY_DATA_DIR` | `/var/lib/certly` (Docker: `/data`) | Where the database, master key and lock file live. Must be private (`0700`). |
@@ -141,7 +141,7 @@ Open a certificate, pick a format under **Download**, and set a password if the 
 | Certificate (PEM) | the certificate | anything |
 | Certificate (DER) | the certificate, binary | Java, Windows, appliances |
 | CA chain (PEM) | intermediate(s) + root | `ssl_client_certificate`, trust stores |
-| Full chain (PEM) | certificate + chain | nginx `ssl_certificate`, HAProxy, Traefik |
+| Full chain (PEM) | certificate + chain | Caddy `tls`, HAProxy, Traefik, nginx |
 | Private key (PKCS#8 PEM) | the key, **encrypted with AES-256 if a password is set** | servers, curl |
 | PKCS#12 (`.p12`) | cert + key + chain, **password required** | browsers, macOS/iOS/Android, Windows |
 | Zip bundle | cert, chain, fullchain, root CA, `README.txt`, and optionally the key (encrypted if a password is set) plus a `.p12` | handing one device everything it needs |
@@ -167,60 +167,74 @@ Click **Renew** on a certificate, or next to it on the dashboard's *Expiring wit
 
 ## Using the certificates for mTLS
 
-Every CA publishes its CRL at two public URLs (no login needed):
+The examples use **Caddy**. Files under `/etc/caddy/certly/` come from Certly's **Download** menu:
 
-```
-https://certly.lan/crl/<ca-id>.crl    # DER: embedded in issued certs when CERTLY_BASE_URL is set
-https://certly.lan/crl/<ca-id>.pem    # PEM: what nginx's ssl_crl expects
-```
+| File | Certly export |
+|---|---|
+| `app.fullchain.pem` | the service's server certificate → *Full chain (PEM)* |
+| `app.key.pem` | its private key → *Private key (PKCS#8 PEM)*, **without a password**, because Caddy can't read encrypted keys. Make it `chmod 600` and owned by the Caddy user. |
+| `ca-chain.pem` | the intermediate that issues your client certificates → *Full chain (PEM)* (intermediate + root) |
 
-The URLs are shown on the CA's page. The CRL to use is the one from the CA that issued your **client** certificates, normally the intermediate.
+### Caddy: require a client certificate
 
-### nginx
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name app.lan;
-
-    ssl_certificate         /etc/nginx/certly/app.fullchain.pem;  # "Full chain" export
-    ssl_certificate_key     /etc/nginx/certly/app.key.pem;        # "Private key" export
-
-    ssl_client_certificate  /etc/nginx/certly/ca-chain.pem;       # intermediate + root
-    ssl_verify_client       on;
-    ssl_verify_depth        2;
-    ssl_crl                 /etc/nginx/certly/crl.pem;            # refreshed by the timer below
+```caddyfile
+app.lan {
+    tls /etc/caddy/certly/app.fullchain.pem /etc/caddy/certly/app.key.pem {
+        client_auth {
+            mode require_and_verify
+            trust_pool file /etc/caddy/certly/ca-chain.pem
+        }
+    }
+    reverse_proxy 127.0.0.1:3000
 }
 ```
 
-nginx reads the CRL file only at startup or reload, so refresh it on a schedule. When the CRL expires, nginx rejects **every** client, which is why Certly re-signs CRLs well before their `nextUpdate`.
+Only clients with a certificate from your CA get through. Run `caddy validate --config /etc/caddy/Caddyfile` after editing, then `caddy reload`.
+
+The app behind Caddy can see who connected through the `{tls_client_subject}` placeholder, e.g. `header_up X-Client-Subject {tls_client_subject}` inside `reverse_proxy`.
+
+### Revocation with Caddy
+
+**Caddy doesn't check CRLs or OCSP for client certificates.** Revoking a certificate in Certly updates the CRL, but Caddy keeps accepting that certificate until it expires. You have two options:
+
+1. **Allowlist the client certificates you trust** with Caddy's built-in `leaf` verifier. Caddy then accepts only certificates that are in the list *and* issued by your CA:
+   ```caddyfile
+   client_auth {
+       mode require_and_verify
+       trust_pool file /etc/caddy/certly/ca-chain.pem
+       verifier leaf {
+           file /etc/caddy/certly/allowed-clients.pem
+       }
+   }
+   ```
+   `allowed-clients.pem` is the *Certificate (PEM)* export of each active client certificate, concatenated. When you revoke one in Certly, remove it from the file and run `caddy reload`.
+2. **Keep client certificates short-lived** (e.g. 30–90 days) and renew them. A lost device then stops working by itself soon after.
+
+The allowlist gives you immediate revocation, and short lifetimes limit the damage if you forget to update it. Using both is best.
+
+### Public CRL URLs
+
+Every CA still publishes its CRL at two public URLs (no login needed), for servers and clients that do check revocation:
+
+```
+https://certly.lan/crl/<ca-id>.crl    # DER: embedded in issued certs when CERTLY_BASE_URL is set
+https://certly.lan/crl/<ca-id>.pem    # PEM
+```
+
+The URLs are shown on the CA's page. The one to use is from the CA that issued your **client** certificates, normally the intermediate. A server that loads a CRL from a file only reads it at reload, so refresh it on a schedule. Every client is rejected once the CRL expires, which is why Certly re-signs CRLs well before their `nextUpdate`.
 
 ```sh
 # /etc/cron.d/certly-crl: every 15 minutes
-*/15 * * * * root curl -fsS -o /etc/nginx/certly/crl.pem.new https://certly.lan/crl/2.pem && mv /etc/nginx/certly/crl.pem.new /etc/nginx/certly/crl.pem && nginx -s reload
+*/15 * * * * root curl -fsS -o /etc/haproxy/certly/crl.pem.new https://certly.lan/crl/2.pem && mv /etc/haproxy/certly/crl.pem.new /etc/haproxy/certly/crl.pem && systemctl reload haproxy
 ```
 
-### Traefik (v3)
+### Other servers
 
-```yaml
-# dynamic configuration
-tls:
-  options:
-    mtls:
-      clientAuth:
-        caFiles: [/etc/traefik/certly/ca-chain.pem]
-        clientAuthType: RequireAndVerifyClientCert
-```
-
-Traefik doesn't check CRLs itself. If you need revocation enforced, put nginx or HAProxy in front, or keep client certificates short-lived.
-
-### HAProxy
-
-```
-bind :443 ssl crt /etc/haproxy/certly/app.pem ca-file /etc/haproxy/certly/ca-chain.pem verify required crl-file /etc/haproxy/certly/crl.pem
-```
-
-`app.pem` is the full chain followed by the key. HAProxy also needs a reload to pick up a new CRL.
+| Server | Client certificates | CRL |
+|---|---|---|
+| HAProxy | `bind :443 ssl crt app.pem ca-file ca-chain.pem verify required` (`app.pem` = full chain followed by the key) | `crl-file crl.pem` on the same line |
+| nginx | `ssl_client_certificate ca-chain.pem; ssl_verify_client on; ssl_verify_depth 2;` | `ssl_crl crl.pem;` |
+| Traefik v3 | `tls.options.<name>.clientAuth`: `caFiles: [ca-chain.pem]`, `clientAuthType: RequireAndVerifyClientCert` | not supported, so keep client certificates short-lived |
 
 ### Clients
 
@@ -266,29 +280,32 @@ The current database is kept as `certly.db.pre-restore`. If the master key doesn
 
 ## Running behind a reverse proxy
 
-Pass the original host and the client IP through, and tell Certly which proxy to trust:
+Caddy is a good fit: `reverse_proxy` passes the original `Host` through unchanged and sets `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` itself, ignoring any values the client sent. Certly needs no extra headers.
 
-```nginx
-location / {
-    proxy_pass         http://127.0.0.1:8080;
-    proxy_set_header   Host              $host;
-    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
-    proxy_set_header   X-Forwarded-Host  $host;
-    proxy_set_header   X-Forwarded-Proto $scheme;
-    client_max_body_size 2m;
+```caddyfile
+certly.lan {
+    # A server certificate for Certly itself, issued by Certly (or use: tls internal)
+    tls /etc/caddy/certly/certly.lan.fullchain.pem /etc/caddy/certly/certly.lan.key.pem
+    reverse_proxy 127.0.0.1:8081
 }
 ```
 
+Then tell Certly that it's behind TLS and which proxy to trust:
+
 ```sh
-CERTLY_TRUSTED_PROXIES=127.0.0.1/32   # the proxy's address
-CERTLY_SECURE_COOKIES=true            # the proxy terminates TLS
+CERTLY_SECURE_COOKIES=true             # Caddy terminates TLS: Secure cookies + HSTS
+CERTLY_TRUSTED_PROXIES=127.0.0.1/32    # Caddy's address as Certly sees it
 ```
+
+- **Caddy on the same host, Certly in Docker with `ports: "8081:8080"`:** Certly sees Caddy as the Docker bridge gateway, not `127.0.0.1`. Use `CERTLY_TRUSTED_PROXIES=172.16.0.0/12`, or the exact gateway shown by `docker network inspect`.
+- **Caddy and Certly in the same Compose project:** use `reverse_proxy certly:8080`, drop the `ports:` mapping so Certly is only reachable through Caddy, and trust the Compose network's subnet.
+- **A first certificate for Certly itself:** open Certly once over plain HTTP, issue a *server* certificate for `certly.lan` from your intermediate, export the full chain and an unencrypted key, then point the `tls` line at them. Your devices trust it once they trust your root CA.
 
 ### "Request blocked" or "Origin does not match Host"
 
 Every form submission is checked so that other websites can't submit forms to Certly in your name (CSRF). Over plain HTTP, browsers don't send the `Sec-Fetch-Site` header, so Certly compares the page's `Origin` with the request's `Host` instead. If something in between changes `Host` (a proxy, Docker or VM port forwarding, a tunnel), the two no longer match and the request is refused. The error page and the server log show both values. First check you're on v0.1.2 or newer (`certly version`, or `docker compose exec certly /certly version`). Older versions sent `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` and caused this error on every plain-HTTP LAN setup. If it still happens, do one of these:
 
-- make the proxy forward the original host (`proxy_set_header Host $host;`), or
+- make the proxy forward the original host. Caddy does this by default; in nginx it's `proxy_set_header Host $host;`. Or:
 - list the proxy in `CERTLY_TRUSTED_PROXIES` so its `X-Forwarded-Host` is used, or
 - add the URL you type in the browser to `CERTLY_ALLOWED_ORIGINS`, e.g. `CERTLY_ALLOWED_ORIGINS=http://192.168.1.10:8080`.
 
