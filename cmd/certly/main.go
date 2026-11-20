@@ -174,7 +174,8 @@ func cmdServe(args []string) error {
 	}
 	defer svc.Store.Close()
 	proxies, _ := c.proxies()
-	srv, err := web.New(web.Config{BaseURL: c.BaseURL, DataDir: c.DataDir, TrustedProxies: proxies, SecureCookies: c.secure(), Version: version}, svc, log)
+	origins, _ := c.origins()
+	srv, err := web.New(web.Config{BaseURL: c.BaseURL, DataDir: c.DataDir, TrustedProxies: proxies, AllowedOrigins: origins, SecureCookies: c.secure(), Version: version}, svc, log)
 	if err != nil {
 		return err
 	}

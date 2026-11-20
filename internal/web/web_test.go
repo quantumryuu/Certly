@@ -40,7 +40,9 @@ type env struct {
 func newEnv(t *testing.T) *env { return newEnvBase(t, true) }
 
 // newEnvBase starts a server; withBase sets CERTLY_BASE_URL to the test URL.
-func newEnvBase(t *testing.T, withBase bool) *env {
+func newEnvBase(t *testing.T, withBase bool) *env { return newEnvCfg(t, withBase, nil) }
+
+func newEnvCfg(t *testing.T, withBase bool, tweak func(*Config)) *env {
 	t.Helper()
 	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "certly.db"))
 	if err != nil {
@@ -58,7 +60,11 @@ func newEnvBase(t *testing.T, withBase bool) *env {
 		base = ts.URL
 	}
 	svc.BaseURL = base
-	srv, err := New(Config{BaseURL: base, DataDir: t.TempDir(), Version: "test"}, svc, log)
+	cfg := Config{BaseURL: base, DataDir: t.TempDir(), Version: "test"}
+	if tweak != nil {
+		tweak(&cfg)
+	}
+	srv, err := New(cfg, svc, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +88,10 @@ func (e *env) do(c *http.Client, method, path string, form url.Values, hdr map[s
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	for k, v := range hdr {
+		if k == "Host" {
+			req.Host = v
+			continue
+		}
 		req.Header.Set(k, v)
 	}
 	resp, err := c.Do(req)
@@ -485,5 +495,73 @@ func TestWithoutBaseURL(t *testing.T) {
 	resp, _ = e.do(e.c, "POST", "/cas", form, map[string]string{"Origin": "http://evil.example"})
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin POST without base URL: %d", resp.StatusCode)
+	}
+}
+
+// Reproduces "Sec-Fetch-Site is missing, and Origin does not match Host":
+// plain-HTTP LAN access through a proxy that rewrites Host.
+func TestProxyRewritesHost(t *testing.T) {
+	browser := "http://certly.lan:8080"
+	proxied := map[string]string{"Origin": browser, "Host": "127.0.0.1:8080"}
+	createCA := func(e *env, hdr map[string]string) int {
+		form := url.Values{"csrf": {e.csrf(e.c, "/cas/new")}, "kind": {"root"}, "cn": {"x"}, "key_type": {"ecdsa-p256"}, "days": {"10"}, "pathlen": {"0"}}
+		resp, body := e.do(e.c, "POST", "/cas", form, hdr)
+		if resp.StatusCode == http.StatusForbidden && !strings.Contains(body, "CERTLY_ALLOWED_ORIGINS") {
+			t.Fatalf("deny page is not the helpful one: %s", body)
+		}
+		return resp.StatusCode
+	}
+
+	t.Run("blocked by default", func(t *testing.T) {
+		e := newEnvBase(t, false)
+		e.setup()
+		if got := createCA(e, proxied); got != http.StatusForbidden {
+			t.Fatalf("got %d", got)
+		}
+	})
+	t.Run("allowed origin", func(t *testing.T) {
+		e := newEnvCfg(t, false, func(c *Config) { c.AllowedOrigins = []string{browser + "/"} })
+		e.setup()
+		if got := createCA(e, proxied); got != http.StatusSeeOther {
+			t.Fatalf("got %d", got)
+		}
+		// Other origins stay blocked.
+		if got := createCA(e, map[string]string{"Origin": "http://evil.example", "Host": "127.0.0.1:8080"}); got != http.StatusForbidden {
+			t.Fatalf("evil origin: %d", got)
+		}
+	})
+	t.Run("forwarded host from trusted proxy", func(t *testing.T) {
+		e := newEnvCfg(t, false, func(c *Config) { c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")} })
+		e.setup()
+		hdr := map[string]string{"Origin": browser, "Host": "127.0.0.1:8080", "X-Forwarded-Host": "certly.lan:8080"}
+		if got := createCA(e, hdr); got != http.StatusSeeOther {
+			t.Fatalf("got %d", got)
+		}
+		// An attacker's page can't use X-Forwarded-Host to make its own origin match.
+		evil := map[string]string{"Origin": "http://evil.example", "Host": "127.0.0.1:8080", "X-Forwarded-Host": "certly.lan:8080"}
+		if got := createCA(e, evil); got != http.StatusForbidden {
+			t.Fatalf("evil origin with forwarded host: %d", got)
+		}
+	})
+	t.Run("forwarded host ignored from untrusted peer", func(t *testing.T) {
+		e := newEnvCfg(t, false, func(c *Config) { c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8")} })
+		e.setup()
+		hdr := map[string]string{"Origin": "http://evil.example", "Host": "127.0.0.1:8080", "X-Forwarded-Host": "evil.example"}
+		if got := createCA(e, hdr); got != http.StatusForbidden {
+			t.Fatalf("spoofed X-Forwarded-Host from untrusted peer: %d", got)
+		}
+	})
+}
+
+func TestNormalizeOrigin(t *testing.T) {
+	for in, want := range map[string]string{"https://certly.lan/": "https://certly.lan", "http://10.0.0.5:8080": "http://10.0.0.5:8080"} {
+		if got, err := NormalizeOrigin(in); err != nil || got != want {
+			t.Fatalf("%s: %s %v", in, got, err)
+		}
+	}
+	for _, bad := range []string{"certly.lan", "ftp://x", "https://x/path", "https://u@x", "*"} {
+		if _, err := NormalizeOrigin(bad); err == nil {
+			t.Fatalf("accepted %q", bad)
+		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"html/template"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -45,6 +46,7 @@ type Config struct {
 	BaseURL        string
 	DataDir        string
 	TrustedProxies []netip.Prefix
+	AllowedOrigins []string // extra browser origins to trust, e.g. http://192.168.1.10:8080
 	SecureCookies  bool
 	Version        string
 }
@@ -60,18 +62,31 @@ type Server struct {
 	totp     *auth.TOTPVerifier
 	pages    map[string]*pageTemplate
 	log      *slog.Logger
-	origin   string
+	origins  []string
+}
+
+// NormalizeOrigin turns a URL like "https://certly.lan/" into the origin
+// "https://certly.lan", rejecting anything that isn't a bare http(s) origin.
+func NormalizeOrigin(raw string) (string, error) {
+	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+		return "", fmt.Errorf("web: %q is not an origin like https://certly.lan or http://192.168.1.10:8080", raw)
+	}
+	return u.Scheme + "://" + u.Host, nil
 }
 
 // New builds the server.
 func New(cfg Config, svc *ca.Service, log *slog.Logger) (*Server, error) {
-	origin := ""
-	if cfg.BaseURL != "" {
-		u, err := url.Parse(cfg.BaseURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-			return nil, fmt.Errorf("web: base URL must be an absolute http(s) URL, got %q", cfg.BaseURL)
+	var origins []string
+	for _, o := range append([]string{cfg.BaseURL}, cfg.AllowedOrigins...) {
+		if o == "" {
+			continue
 		}
-		origin = u.Scheme + "://" + u.Host
+		norm, err := NormalizeOrigin(o)
+		if err != nil {
+			return nil, err
+		}
+		origins = append(origins, norm)
 	}
 	sm := scs.New()
 	sm.Store = sqlite3store.New(svc.Store.DB())
@@ -94,7 +109,7 @@ func New(cfg Config, svc *ca.Service, log *slog.Logger) (*Server, error) {
 	s := &Server{
 		cfg: cfg, svc: svc, st: svc.Store, env: svc.Env, sessions: sm,
 		limiter: auth.NewLimiter(), totp: auth.NewTOTPVerifier(), pages: pages, log: log,
-		origin: origin,
+		origins: origins,
 	}
 	sm.ErrorFunc = func(w http.ResponseWriter, r *http.Request, err error) {
 		s.log.Error("session error", "err", err)
@@ -106,7 +121,7 @@ func New(cfg Config, svc *ca.Service, log *slog.Logger) (*Server, error) {
 // Handler returns the root HTTP handler.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(s.recoverer, s.clientIP, s.securityHeaders, s.limitBody, s.logRequests)
+	r.Use(s.recoverer, s.clientIP, s.forwardedHost, s.securityHeaders, s.limitBody, s.logRequests)
 
 	static, _ := fs.Sub(staticFS, "static")
 	r.Handle("/static/*", http.StripPrefix("/static/", staticCache(http.FileServerFS(static))))
@@ -114,12 +129,13 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok\n")) })
 	r.Get("/crl/{file}", s.handleCRL)
 
-	// Same-origin requests (Origin matches Host) are always allowed; the base
-	// URL is trusted too, for proxies that rewrite Host.
+	// Same-origin requests (Origin matches Host) are always allowed. The base
+	// URL and CERTLY_ALLOWED_ORIGINS are trusted too, for proxies that rewrite Host.
 	cop := http.NewCrossOriginProtection()
-	if s.origin != "" {
-		_ = cop.AddTrustedOrigin(s.origin)
+	for _, o := range s.origins {
+		_ = cop.AddTrustedOrigin(o) // validated in New
 	}
+	cop.SetDenyHandler(http.HandlerFunc(s.crossOriginDenied))
 
 	r.Group(func(r chi.Router) {
 		r.Use(cop.Handler, s.sessions.LoadAndSave, s.csrf)
@@ -236,6 +252,64 @@ func ipOf(r *http.Request) string {
 	ip, _ := r.Context().Value(ctxIP).(string)
 	return ip
 }
+
+// forwardedHost uses X-Forwarded-Host as the request host, but only when the
+// direct peer is a trusted proxy, so the same-origin check sees the host the
+// browser actually used.
+func (s *Server) forwardedHost(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fh := r.Header.Get("X-Forwarded-Host"); fh != "" && s.fromTrustedProxy(r) {
+			host := strings.TrimSpace(strings.Split(fh, ",")[0])
+			if host != "" && !strings.ContainsAny(host, "/\\ @") {
+				r.Host = host
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) fromTrustedProxy(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	peer, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	peer = peer.Unmap()
+	for _, p := range s.cfg.TrustedProxies {
+		if p.Contains(peer) {
+			return true
+		}
+	}
+	return false
+}
+
+// crossOriginDenied explains a rejected cross-origin request, and logs the
+// values needed to fix a proxy setup.
+func (s *Server) crossOriginDenied(w http.ResponseWriter, r *http.Request) {
+	s.log.Warn("rejected cross-origin request: if this is you, add the browser's URL to CERTLY_ALLOWED_ORIGINS or make your proxy forward the Host header",
+		"origin", r.Header.Get("Origin"), "host", r.Host, "sec_fetch_site", r.Header.Get("Sec-Fetch-Site"), "path", r.URL.Path, "ip", ipOf(r))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = crossOriginPage.Execute(w, struct{ Origin, Host string }{r.Header.Get("Origin"), r.Host})
+}
+
+var crossOriginPage = template.Must(template.New("xo").Parse(`<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Request blocked · Certly</title>
+<link rel="stylesheet" href="/static/pico.min.css"><link rel="stylesheet" href="/static/app.css"></head>
+<body><main class="container"><article>
+<h2>Request blocked</h2>
+<p>Certly refused this form submission because it looks like it came from another site, which is how cross-site request forgery works.</p>
+<p>The page was opened as <code>{{.Origin}}</code>, but the request arrived for host <code>{{.Host}}</code>.</p>
+<p>If you opened Certly yourself, this usually means a reverse proxy or port forward changes the Host header. Fix it by either:</p>
+<ul>
+<li>setting <code>CERTLY_ALLOWED_ORIGINS={{.Origin}}</code> and restarting Certly, or</li>
+<li>making the proxy pass the original host (nginx: <code>proxy_set_header Host $host;</code>), or listing the proxy in <code>CERTLY_TRUSTED_PROXIES</code> so its <code>X-Forwarded-Host</code> is used.</li>
+</ul>
+<p><a href="/">Back to Certly</a></p>
+</article></main></body></html>`))
 
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

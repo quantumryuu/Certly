@@ -47,6 +47,7 @@ docker build -t certly . && docker compose up
 - `/crl/*`, `/healthz` and `/static/*` are the only routes that skip auth (`/setup` and `/login` need a session, but not a login). Every other route needs a logged-in session, and every POST checks CSRF.
 - Sealed key blobs are bound to their row with AAD (`cert-key:<id>`, `totp:<uid>`). Never seal without AAD.
 - A CA can sign only if it and every CA above it are unrevoked and unexpired (`ca.Service.checkChain`).
+- `X-Forwarded-For` and `X-Forwarded-Host` are honoured only when the direct peer is in `CERTLY_TRUSTED_PROXIES`. Never trust forwarded headers from anyone else.
 - Every request body is capped at 1 MiB (`maxBody`). Don't raise it for one handler without a size limit of its own.
 - Templates rely on `html/template` auto-escaping. Never use `template.HTML`/`template.URL` on user input. CSP forbids inline scripts and styles, so don't add `style=` or `<script>` blocks; put CSS in `static/app.css`.
 

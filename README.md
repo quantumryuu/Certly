@@ -33,6 +33,7 @@ Certly is a self-hosted web app for running your own certificate authority. It i
 - [Day-to-day use](#day-to-day-use)
 - [Using the certificates for mTLS](#using-the-certificates-for-mtls)
 - [Backup and restore](#backup-and-restore)
+- [Running behind a reverse proxy](#running-behind-a-reverse-proxy)
 - [Command-line reference](#command-line-reference)
 - [Security model](#security-model)
 - [Upgrading](#upgrading)
@@ -98,7 +99,8 @@ Settings come from environment variables. Each variable also has a matching flag
 | `CERTLY_DATA_DIR` | `/var/lib/certly` (Docker: `/data`) | Where the database, master key and lock file live. Must be private (`0700`). |
 | `CERTLY_MASTER_KEY_FILE` | `$CERTLY_DATA_DIR/master.key` | The 32-byte master key, base64-encoded. It's generated on the first `serve` if missing. Certly refuses to start if the file is readable by group or others. |
 | `CERTLY_TLS_CERT` / `CERTLY_TLS_KEY` | *(empty)* | Serve HTTPS directly (TLS 1.2 or newer). Leave empty when running behind a reverse proxy. |
-| `CERTLY_TRUSTED_PROXIES` | *(empty)* | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` header is trusted. This is needed for correct client IPs in the audit log and for per-IP login lockout. |
+| `CERTLY_ALLOWED_ORIGINS` | *(empty)* | Comma-separated browser origins to trust for form submissions, e.g. `http://192.168.1.10:8080,https://certly.lan`. You only need it if you get **"Request blocked" / "Origin does not match Host"**, which happens when a proxy or port forward changes the `Host` header. `CERTLY_BASE_URL` is trusted automatically. |
+| `CERTLY_TRUSTED_PROXIES` | *(empty)* | Comma-separated CIDRs of reverse proxies whose `X-Forwarded-For` and `X-Forwarded-Host` headers are trusted. This is needed for correct client IPs in the audit log, for per-IP login lockout, and for proxies that rewrite `Host`. |
 | `CERTLY_CRL_VALIDITY` | `168h` | How long each CRL is valid (between 1h and 90 days). CRLs are re-signed at half this time, and immediately whenever a certificate is revoked. |
 | `CERTLY_LOG_FORMAT` | `text` | `text` or `json` |
 | `CERTLY_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error` |
@@ -261,6 +263,34 @@ Before replacing anything, restore checks the backup:
 - SQLite's integrity check passes
 
 The current database is kept as `certly.db.pre-restore`. If the master key doesn't match the restored database, `certly serve` refuses to start with a clear error.
+
+## Running behind a reverse proxy
+
+Pass the original host and the client IP through, and tell Certly which proxy to trust:
+
+```nginx
+location / {
+    proxy_pass         http://127.0.0.1:8080;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Host  $host;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+    client_max_body_size 2m;
+}
+```
+
+```sh
+CERTLY_TRUSTED_PROXIES=127.0.0.1/32   # the proxy's address
+CERTLY_SECURE_COOKIES=true            # the proxy terminates TLS
+```
+
+### "Request blocked" or "Origin does not match Host"
+
+Every form submission is checked so that other websites can't submit forms to Certly in your name (CSRF). Over plain HTTP, browsers don't send the `Sec-Fetch-Site` header, so Certly compares the page's `Origin` with the request's `Host` instead. If something in between changes `Host` (a proxy, Docker or VM port forwarding, a tunnel), the two no longer match and the request is refused. The error page and the server log show both values. To fix it, do one of these:
+
+- make the proxy forward the original host (`proxy_set_header Host $host;`), or
+- list the proxy in `CERTLY_TRUSTED_PROXIES` so its `X-Forwarded-Host` is used, or
+- add the URL you type in the browser to `CERTLY_ALLOWED_ORIGINS`, e.g. `CERTLY_ALLOWED_ORIGINS=http://192.168.1.10:8080`.
 
 ## Command-line reference
 

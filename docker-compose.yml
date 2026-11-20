@@ -15,6 +15,7 @@ services:
       # CERTLY_BASE_URL: "https://certly.lan"     # optional, see README
       # CERTLY_SECURE_COOKIES: "true"             # if a TLS reverse proxy is in front
       # CERTLY_TRUSTED_PROXIES: "172.16.0.0/12"   # if behind a reverse proxy
+      # CERTLY_ALLOWED_ORIGINS: "http://192.168.1.10:8080"  # if you see "Request blocked"
       # CERTLY_LOG_FORMAT: json
     volumes:
       - certly-data:/data

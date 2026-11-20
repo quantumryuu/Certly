@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/quantumryuu/Certly/internal/web"
 )
 
 // config is every setting. Each one is an env var with a matching flag;
@@ -26,6 +28,7 @@ type config struct {
 	LogLevel       string
 	TrustedProxies string
 	SecureCookies  string
+	AllowedOrigins string
 	CRLValidity    time.Duration
 }
 
@@ -66,6 +69,7 @@ func bindServeConfig(fs *flag.FlagSet) *config {
 	fs.StringVar(&c.TLSCert, "tls-cert", env("CERTLY_TLS_CERT", ""), "serve HTTPS with this certificate (env CERTLY_TLS_CERT)")
 	fs.StringVar(&c.TLSKey, "tls-key", env("CERTLY_TLS_KEY", ""), "private key for -tls-cert (env CERTLY_TLS_KEY)")
 	fs.StringVar(&c.SecureCookies, "secure-cookies", env("CERTLY_SECURE_COOKIES", "auto"), "auto, true or false: mark cookies Secure and send HSTS; auto = on when TLS is configured or the base URL is https (env CERTLY_SECURE_COOKIES)")
+	fs.StringVar(&c.AllowedOrigins, "allowed-origins", env("CERTLY_ALLOWED_ORIGINS", ""), "comma-separated browser origins to trust for form posts, e.g. http://192.168.1.10:8080 (env CERTLY_ALLOWED_ORIGINS)")
 	fs.StringVar(&c.TrustedProxies, "trusted-proxies", env("CERTLY_TRUSTED_PROXIES", ""), "comma-separated CIDRs whose X-Forwarded-For is trusted (env CERTLY_TRUSTED_PROXIES)")
 	return c
 }
@@ -103,8 +107,26 @@ func (c *config) finish(serve bool) error {
 	default:
 		return errors.New("CERTLY_SECURE_COOKIES must be auto, true or false")
 	}
+	if _, err := c.origins(); err != nil {
+		return err
+	}
 	_, err = c.proxies()
 	return err
+}
+
+func (c *config) origins() ([]string, error) {
+	var out []string
+	for _, o := range strings.Split(c.AllowedOrigins, ",") {
+		if o = strings.TrimSpace(o); o == "" {
+			continue
+		}
+		n, err := web.NormalizeOrigin(o)
+		if err != nil {
+			return nil, fmt.Errorf("CERTLY_ALLOWED_ORIGINS: %w", err)
+		}
+		out = append(out, n)
+	}
+	return out, nil
 }
 
 func (c *config) proxies() ([]netip.Prefix, error) {
