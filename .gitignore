@@ -1,0 +1,43 @@
+# Build output
+/bin/
+/dist/
+
+# Runtime data: never commit
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.db.pre-restore
+*.tar.gz
+*.tar.gz.enc
+
+# Key material and certificates: never commit
+*.key
+*.pem
+*.crt
+*.cer
+*.der
+*.csr
+*.crl
+*.p12
+*.pfx
+*.jks
+master.key
+# Allow test fixtures only if deliberately placed here
+!/internal/**/testdata/**
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+.claude/settings.local.json
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Go
+coverage.out
+*.test
