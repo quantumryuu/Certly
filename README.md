@@ -286,7 +286,7 @@ CERTLY_SECURE_COOKIES=true            # the proxy terminates TLS
 
 ### "Request blocked" or "Origin does not match Host"
 
-Every form submission is checked so that other websites can't submit forms to Certly in your name (CSRF). Over plain HTTP, browsers don't send the `Sec-Fetch-Site` header, so Certly compares the page's `Origin` with the request's `Host` instead. If something in between changes `Host` (a proxy, Docker or VM port forwarding, a tunnel), the two no longer match and the request is refused. The error page and the server log show both values. To fix it, do one of these:
+Every form submission is checked so that other websites can't submit forms to Certly in your name (CSRF). Over plain HTTP, browsers don't send the `Sec-Fetch-Site` header, so Certly compares the page's `Origin` with the request's `Host` instead. If something in between changes `Host` (a proxy, Docker or VM port forwarding, a tunnel), the two no longer match and the request is refused. The error page and the server log show both values. First check you're on v0.1.2 or newer (`certly version`, or `docker compose exec certly /certly version`). Older versions sent `Referrer-Policy: no-referrer`, which makes browsers send `Origin: null` and caused this error on every plain-HTTP LAN setup. If it still happens, do one of these:
 
 - make the proxy forward the original host (`proxy_set_header Host $host;`), or
 - list the proxy in `CERTLY_TRUSTED_PROXIES` so its `X-Forwarded-Host` is used, or
@@ -319,7 +319,7 @@ certly version
 - One admin account: argon2id passwords (64 MiB, t=3), optional TOTP with replay protection, and login lockout.
 - Sessions use `HttpOnly` cookies with `SameSite=Strict` (`Secure` and `__Host-` over HTTPS). The token is renewed on login, and sessions are invalidated when the password changes. There's a 12-hour lifetime and a 2-hour idle timeout.
 - CSRF has two layers: a per-session token, plus checking the `Origin`/`Sec-Fetch-Site` headers with Go's `CrossOriginProtection`.
-- A strict Content Security Policy (no inline scripts or styles), `frame-ancestors 'none'`, `nosniff`, `no-referrer`, and `no-store` caching for pages.
+- A strict Content Security Policy (no inline scripts or styles), `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy: same-origin` (no URLs leak to other sites), and `no-store` caching for pages.
 - Request bodies are capped at 1 MiB, and server timeouts guard against slow clients.
 
 **PKI rules:**

@@ -303,6 +303,7 @@ var crossOriginPage = template.Must(template.New("xo").Parse(`<!doctype html><ht
 <h2>Request blocked</h2>
 <p>Certly refused this form submission because it looks like it came from another site, which is how cross-site request forgery works.</p>
 <p>The page was opened as <code>{{.Origin}}</code>, but the request arrived for host <code>{{.Host}}</code>.</p>
+{{if eq .Origin "null"}}<p><strong>Your browser sent <code>Origin: null</code>.</strong> That happens when the page was opened from a bookmark/file, a privacy extension strips the origin, or something in front of Certly sets <code>Referrer-Policy: no-referrer</code>. Reload Certly from its normal address and try again.</p>{{end}}
 <p>If you opened Certly yourself, this usually means a reverse proxy or port forward changes the Host header. Fix it by either:</p>
 <ul>
 <li>setting <code>CERTLY_ALLOWED_ORIGINS={{.Origin}}</code> and restarting Certly, or</li>
@@ -318,7 +319,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 			"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Referrer-Policy", "no-referrer")
+		// Not "no-referrer": with it, browsers send "Origin: null" on form
+		// posts, which breaks the same-origin check over plain HTTP (where
+		// Sec-Fetch-Site isn't sent). same-origin still never leaks URLs to
+		// other sites.
+		h.Set("Referrer-Policy", "same-origin")
 		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
 		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")

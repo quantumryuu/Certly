@@ -427,6 +427,14 @@ func TestXSSEscaped(t *testing.T) {
 	if resp.Header.Get("X-Content-Type-Options") != "nosniff" || resp.Header.Get("Cache-Control") != "no-store" {
 		t.Fatal("missing security headers")
 	}
+	// "no-referrer" makes browsers send "Origin: null" on form posts, which
+	// breaks the same-origin check over plain HTTP. Keep it same-origin.
+	if rp := resp.Header.Get("Referrer-Policy"); rp != "same-origin" {
+		t.Fatalf("Referrer-Policy = %q", rp)
+	}
+	if strings.Contains(body, `content="no-referrer"`) {
+		t.Fatal("layout meta tag still sets no-referrer")
+	}
 }
 
 func TestHTMXPartialAndSearch(t *testing.T) {
@@ -563,5 +571,24 @@ func TestNormalizeOrigin(t *testing.T) {
 		if _, err := NormalizeOrigin(bad); err == nil {
 			t.Fatalf("accepted %q", bad)
 		}
+	}
+}
+
+// A plain-HTTP LAN browser (no Sec-Fetch-Site) posting with its real Origin
+// must work; "Origin: null" (what no-referrer pages send) stays blocked.
+func TestPlainHTTPBrowserOrigin(t *testing.T) {
+	e := newEnvBase(t, false)
+	e.setup()
+	u, _ := url.Parse(e.ts.URL)
+	post := func(origin string) int {
+		form := url.Values{"csrf": {e.csrf(e.c, "/cas/new")}, "kind": {"root"}, "cn": {"x"}, "key_type": {"ecdsa-p256"}, "days": {"10"}, "pathlen": {"0"}}
+		resp, _ := e.do(e.c, "POST", "/cas", form, map[string]string{"Origin": origin})
+		return resp.StatusCode
+	}
+	if got := post("http://" + u.Host); got != http.StatusSeeOther {
+		t.Fatalf("same-origin browser post: %d", got)
+	}
+	if got := post("null"); got != http.StatusForbidden {
+		t.Fatalf("Origin: null accepted: %d", got)
 	}
 }
