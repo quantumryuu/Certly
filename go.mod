@@ -11,7 +11,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78
 	golang.org/x/crypto v0.59.0
 	golang.org/x/term v0.48.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 	software.sslmate.com/src/go-pkcs12 v0.7.4
 )
 
